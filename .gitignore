@@ -1,0 +1,9 @@
+*~
+#*
+.#*
+Dependencies*
+*.so
+doc/
+obj/
+.sconsign.dblite
+test/FileDataSourceTest
