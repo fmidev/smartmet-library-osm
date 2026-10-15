@@ -40,7 +40,7 @@ class PostgresDataSource : public DataSource
   std::string itsDatabase;
   std::string itsUser;
   std::string itsPassword;
-  int itsPort;
+  [[maybe_unused]] int itsPort;  // the data source is not implemented yet
 };
 
 }  // namespace Osm
