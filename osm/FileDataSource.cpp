@@ -150,7 +150,7 @@ Places FileDataSource::readPlaces()
       p.id = nextId++;
       p.name = f[iName];
       p.iso2 = f[iIso2];
-      const std::string placeTag = f[iPlace];
+      const std::string& placeTag = f[iPlace];
       p.feature = featureCodeForPlaceTag(placeTag);
       if (p.feature.empty())
         continue;
