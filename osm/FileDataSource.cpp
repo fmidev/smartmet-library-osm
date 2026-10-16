@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
@@ -71,6 +72,72 @@ double parseDoubleOrThrow(const std::string& s, const char* what)
         .addParameter("value", s);
   }
 }
+// The column indices of a place file, -1 for missing columns
+struct PlaceColumns
+{
+  int osmId;
+  int place;
+  int name;
+  int iso2;
+  int lon;
+  int lat;
+  int pop;
+  int tz;
+  int adm;
+};
+
+PlaceColumns findPlaceColumns(const std::vector<std::string>& cols)
+{
+  auto colIndex = [&](const char* name) -> int
+  {
+    for (std::size_t i = 0; i < cols.size(); ++i)
+      if (cols[i] == name)
+        return static_cast<int>(i);
+    return -1;
+  };
+
+  PlaceColumns c{};
+  c.osmId = colIndex("osm_id");
+  c.place = colIndex("place");
+  c.name = colIndex("name");
+  c.iso2 = colIndex("iso2");
+  c.lon = colIndex("lon");
+  c.lat = colIndex("lat");
+  c.pop = colIndex("population");
+  c.tz = colIndex("timezone");
+  c.adm = colIndex("admin1");
+  return c;
+}
+
+// Parse a place from the fields of a line. Returns nothing if the place is not accepted.
+std::optional<Place> parsePlace(const std::vector<std::string>& f, const PlaceColumns& c, long id)
+{
+  const int nf = static_cast<int>(f.size());
+
+  Place p;
+  p.id = id;
+  p.name = f[c.name];
+  p.iso2 = f[c.iso2];
+  const std::string& placeTag = f[c.place];
+  p.feature = featureCodeForPlaceTag(placeTag);
+  if (p.feature.empty())
+    return {};
+  p.lon = parseDoubleOrThrow(f[c.lon], "lon");
+  p.lat = parseDoubleOrThrow(f[c.lat], "lat");
+  p.population = (c.pop >= 0 && nf > c.pop)
+                     ? parseIntOrEmpty(f[c.pop], defaultPopulationForPlaceTag(placeTag))
+                     : defaultPopulationForPlaceTag(placeTag);
+  p.timezone = (c.tz >= 0 && nf > c.tz && !f[c.tz].empty()) ? f[c.tz]
+                                                            : CountryInfo::defaultTimezone(p.iso2);
+  p.admin1 = (c.adm >= 0 && nf > c.adm) ? f[c.adm] : std::string{};
+  // We swallow osm_id; only the synthetic id is exposed.
+
+  if (p.name.empty() || p.iso2.empty())
+    return {};
+
+  return p;
+}
+
 }  // namespace
 
 FileDataSource::FileDataSource(std::string directory) : itsDirectory(std::move(directory))
@@ -113,27 +180,9 @@ Places FileDataSource::readPlaces()
     std::string header;
     if (!std::getline(in, header))
       continue;
-    auto cols = splitTabs(header);
+    const PlaceColumns c = findPlaceColumns(splitTabs(header));
 
-    auto colIndex = [&](const char* name) -> int
-    {
-      for (std::size_t i = 0; i < cols.size(); ++i)
-        if (cols[i] == name)
-          return static_cast<int>(i);
-      return -1;
-    };
-
-    const int iOsmId = colIndex("osm_id");
-    const int iPlace = colIndex("place");
-    const int iName = colIndex("name");
-    const int iIso2 = colIndex("iso2");
-    const int iLon = colIndex("lon");
-    const int iLat = colIndex("lat");
-    const int iPop = colIndex("population");
-    const int iTz = colIndex("timezone");
-    const int iAdm = colIndex("admin1");
-
-    if (iName < 0 || iIso2 < 0 || iLon < 0 || iLat < 0 || iPlace < 0)
+    if (c.name < 0 || c.iso2 < 0 || c.lon < 0 || c.lat < 0 || c.place < 0)
       throw Fmi::Exception(BCP, "FileDataSource: missing required columns")
           .addParameter("path", path);
 
@@ -143,33 +192,12 @@ Places FileDataSource::readPlaces()
       if (line.empty())
         continue;
       auto f = splitTabs(line);
-      if (static_cast<int>(f.size()) <= iLat)
+      if (static_cast<int>(f.size()) <= c.lat)
         continue;
 
-      Place p;
-      p.id = nextId++;
-      p.name = f[iName];
-      p.iso2 = f[iIso2];
-      const std::string& placeTag = f[iPlace];
-      p.feature = featureCodeForPlaceTag(placeTag);
-      if (p.feature.empty())
-        continue;
-      p.lon = parseDoubleOrThrow(f[iLon], "lon");
-      p.lat = parseDoubleOrThrow(f[iLat], "lat");
-      p.population = (iPop >= 0 && static_cast<int>(f.size()) > iPop)
-                         ? parseIntOrEmpty(f[iPop], defaultPopulationForPlaceTag(placeTag))
-                         : defaultPopulationForPlaceTag(placeTag);
-      p.timezone = (iTz >= 0 && static_cast<int>(f.size()) > iTz && !f[iTz].empty())
-                       ? f[iTz]
-                       : CountryInfo::defaultTimezone(p.iso2);
-      p.admin1 = (iAdm >= 0 && static_cast<int>(f.size()) > iAdm) ? f[iAdm] : std::string{};
-      // We swallow osm_id; only the synthetic id is exposed.
-      (void)iOsmId;
-
-      if (p.name.empty() || p.iso2.empty())
-        continue;
-
-      out.push_back(std::move(p));
+      auto p = parsePlace(f, c, nextId++);
+      if (p)
+        out.push_back(std::move(*p));
     }
   }
   return out;
